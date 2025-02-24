@@ -2,14 +2,17 @@
 <html lang="cs">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Viewer - Bufet</title>
   <script src="/socket.io/socket.io.js"></script>
   <style>
+    /* Celkové nastavení černého pozadí a oranžového textu */
     body {
       margin: 0;
       padding: 0;
       font-family: Arial, sans-serif;
-      background: #fff;
+      background-color: #000;
+      color: #FFA500;
       display: flex;
       flex-direction: column;
       height: 100vh;
@@ -19,7 +22,7 @@
       display: flex;
       justify-content: space-between;
       align-items: center;
-      border-bottom: 1px solid #ccc;
+      border-bottom: 1px solid #FFA500;
       padding: 10px;
     }
     #clock {
@@ -29,6 +32,9 @@
       padding: 5px 10px;
       font-size: 16px;
       cursor: pointer;
+      background-color: #FFA500;
+      color: #000;
+      border: none;
     }
     #main {
       flex: 1;
@@ -36,14 +42,8 @@
       overflow: auto;
     }
     #left-container {
-      flex: 2;
-      padding: 10px;
-      overflow-y: auto;
-    }
-    #right-container {
       flex: 1;
       padding: 10px;
-      border-left: 1px solid #ccc;
       overflow-y: auto;
     }
     h2 {
@@ -80,18 +80,45 @@
       50% { opacity: 0; }
       100% { opacity: 1; }
     }
-    /* Read-only zobrazení programu */
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 10px;
+
+    /* Responzivní úpravy pro tablety a mobilní telefony */
+    @media (max-width: 768px) {
+      #header {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      #clock {
+        margin-bottom: 10px;
+      }
+      #main {
+        flex-direction: column;
+      }
+      #left-container {
+        width: 100%;
+      }
     }
-    table, th, td {
-      border: 1px solid #ccc;
+    @media (max-width: 480px) {
+      .queue-item {
+        width: 120px;
+        height: 120px;
+      }
     }
-    th, td {
-      padding: 5px;
-      text-align: center;
+    /* Zvýraznění pro desktop – vše zvětšeno o 20 % oproti předchozí desktop verzi */
+    @media (min-width: 1024px) {
+      #clock {
+        font-size: 36px;      /* 30px → 36px */
+      }
+      #adminBtn {
+        padding: 12px 24px;    /* 10px a 20px → 12px a 24px */
+        font-size: 22px;       /* 18px → 22px */
+      }
+      .queue-item {
+        width: 240px;         /* 200px → 240px */
+        height: 240px;        /* 200px → 240px */
+      }
+      h2 {
+        font-size: 31px;       /* 26px → cca 31px */
+      }
     }
   </style>
 </head>
@@ -102,22 +129,10 @@
   </div>
   <div id="main">
     <div id="left-container">
-      <h2>Studený bufet</h2>
+      <h2>Cold buffet</h2>
       <div id="cold-queue" class="queue-container"></div>
-      <h2>Teplý bufet</h2>
+      <h2>Hot buffet</h2>
       <div id="warm-queue" class="queue-container"></div>
-    </div>
-    <div id="right-container">
-      <h2>Program</h2>
-      <table id="schedule-table">
-        <thead>
-          <tr>
-            <th>Čas</th>
-            <th>Počet lidí</th>
-          </tr>
-        </thead>
-        <tbody></tbody>
-      </table>
     </div>
   </div>
   
@@ -136,9 +151,9 @@
       window.location.href = "admin.html";
     });
 
-    // Timer pro aktivní položky bufetu
+    // Zvýšený timer na 5 minut (300 000 ms)
     const timers = {};
-    const TIMER_DURATION = 180000; // 3 minuty
+    const TIMER_DURATION = 300000; // 5 minut
     const BLINK_THRESHOLD = 10000; // posledních 10 sekund
 
     function formatTime(ms) {
@@ -160,6 +175,21 @@
         item.innerHTML = `<img src="${data.img}" alt="Obrázek">
                           <div class="stopwatch">00:00</div>`;
         container.appendChild(item);
+        // Přidání události: při kliknutí na obrázek se položka odstraní
+        const imgElem = item.querySelector("img");
+        imgElem.style.cursor = "pointer";
+        imgElem.addEventListener("click", () => {
+          // Odešleme socket událost, která "odklikne" tlačítko i v admin rozhraní
+          const [section, index] = itemId.split("-");
+          socket.emit("buttonToggled", { section, index, active: false, img: data.img });
+          // Odstraníme položku a vymažeme případné časovače
+          item.remove();
+          if (timers[itemId]) {
+            clearTimeout(timers[itemId].timeout);
+            clearInterval(timers[itemId].interval);
+            delete timers[itemId];
+          }
+        });
       }
       const activationTime = data.activationTime;
       const elapsed = Date.now() - activationTime;
@@ -194,7 +224,7 @@
       const itemId = data.section + "-" + data.index;
       const item = document.getElementById(itemId);
       if (item) {
-        item.parentNode.removeChild(item);
+        item.remove();
       }
       if (timers[itemId]) {
         clearTimeout(timers[itemId].timeout);
@@ -212,21 +242,6 @@
       } else {
         removeItem(data);
       }
-    });
-
-    // Zobrazení read-only programu
-    const scheduleTableBody = document.querySelector("#schedule-table tbody");
-    function updateScheduleTable(items) {
-      scheduleTableBody.innerHTML = "";
-      items.forEach(item => {
-        const row = document.createElement("tr");
-        row.innerHTML = `<td>${item.time}</td>
-                         <td>${item.count}</td>`;
-        scheduleTableBody.appendChild(row);
-      });
-    }
-    socket.on("scheduleData", (data) => {
-      updateScheduleTable(data);
     });
   </script>
 </body>
