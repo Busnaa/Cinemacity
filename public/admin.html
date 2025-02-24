@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <title>Admin - Bufet</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    /* Styl pro přihlašovací formulář */
+    #login-container {
+      max-width: 300px;
+      margin: 100px auto;
+      padding: 20px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      text-align: center;
+    }
+    #login-container input {
+      width: 80%;
+      padding: 5px;
+      margin: 10px 0;
+    }
+    #login-container button {
+      padding: 5px 10px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    /* Skryté administrátorské rozhraní – objeví se po úspěšném přihlášení */
+    #admin-content {
+      display: none;
+    }
+    h2 {
+      margin-top: 30px;
+    }
+    .button-container {
+      margin-bottom: 30px;
+    }
+    .button-wrapper {
+      display: inline-block;
+      text-align: center;
+      margin: 5px;
+    }
+    .toggle-button {
+      padding: 10px 20px;
+      cursor: pointer;
+      border: 2px solid #555;
+      border-radius: 5px;
+      background-color: #f0f0f0;
+      transition: background-color 0.3s;
+    }
+    .toggle-button.active {
+      background-color: #4CAF50;
+      color: #fff;
+    }
+    /* Správa programu (schedule) */
+    #schedule-management {
+      margin-top: 30px;
+    }
+    #schedule-form input {
+      padding: 5px;
+      margin: 5px;
+    }
+    #schedule-form button {
+      padding: 5px 10px;
+      margin: 5px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 5px;
+      text-align: center;
+    }
+    /* Tlačítko pro vymazání celého programu */
+    #deleteAllSchedule {
+      padding: 5px 10px;
+      margin: 5px;
+      background-color: #d9534f;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <!-- Přihlašovací formulář -->
+  <div id="login-container">
+    <h2>Přihlášení</h2>
+    <input type="password" id="login-password" placeholder="Zadejte heslo" />
+    <button id="loginBtn">Přihlásit se</button>
+  </div>
+
+  <!-- Administrátorské rozhraní -->
+  <div id="admin-content">
+    <!-- Bufet tlačítka -->
+    <h2>Studený bufet</h2>
+    <div id="cold-buffet" class="button-container"></div>
+
+    <h2>Teplý bufet</h2>
+    <div id="warm-buffet" class="button-container"></div>
+
+    <!-- Správa programu -->
+    <h2>Správa programu</h2>
+    <div id="schedule-management">
+      <div id="schedule-form">
+        <input type="text" id="schedule-time" placeholder="Čas (např. 12:00)" />
+        <input type="number" id="schedule-count" placeholder="Počet lidí" />
+        <button id="addSchedule">Přidat</button>
+        <button id="updateSchedule" style="display:none;">Aktualizovat</button>
+        <button id="cancelUpdate" style="display:none;">Zrušit</button>
+        <!-- Opravené tlačítko vymazat vše: odesílá událost "deleteAllSchedule" -->
+        <button id="deleteAllSchedule">Vymazat vše</button>
+      </div>
+      <table id="schedule-table">
+        <thead>
+          <tr>
+            <th>Čas</th>
+            <th>Počet lidí</th>
+            <th>Akce</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+
+    // Přihlašovací logika
+    const loginContainer = document.getElementById("login-container");
+    const adminContent = document.getElementById("admin-content");
+    const loginBtn = document.getElementById("loginBtn");
+    loginBtn.addEventListener("click", () => {
+      const password = document.getElementById("login-password").value.trim();
+      if (password === "admin123") { // Nastavte své heslo
+        loginContainer.style.display = "none";
+        adminContent.style.display = "block";
+      } else {
+        alert("Neplatné heslo!");
+      }
+    });
+
+    const coldNames = [
+      "Potato salad", "Beetroot salad", "Carrot salad", "Lettuce", "Cucumber",
+      "Corn", "Carrot", "Pepper", "Tomato", "Sour cream",
+      "Olive paste", "Olives", "Yellow Butter", "Carrot dip", "Sherry Vinaigrette",
+      "Truffles", "Cheesecakes", "Puffs"
+    ];
+    // Pole s názvy tlačítek pro sekci Teplý bufet (11 tlačítek)
+    const warmNames = [
+      "Margharita", "Mushroom pizza", "Chicken", "Rice", "Pasta",
+      "Potates", "Ragu", "Brocolli sauce", "Sweet chilli", "Focaccia",
+      "Soup"
+    ];
+
+    // Generování tlačítek pro bufet
+    function generateButtons(containerId, section, count, names) {
+      const container = document.getElementById(containerId);
+      for (let i = 1; i <= count; i++) {
+        const wrapper = document.createElement("div");
+        wrapper.className = "button-wrapper";
+        wrapper.setAttribute("data-section", section);
+        wrapper.setAttribute("data-index", i);
+        const buttonName = names && names[i - 1] ? names[i - 1] : `Tlačítko ${i}`;
+        wrapper.setAttribute("data-name", buttonName);
+        // Obrázky jsou v adresáři "images"
+        const imgPath = section === "cold" ? `images/cold${i}.jpg` : `images/warm${i}.jpg`;
+        wrapper.setAttribute("data-img", imgPath);
+        wrapper.innerHTML = `<button class="toggle-button">${buttonName}</button>`;
+        container.appendChild(wrapper);
+      }
+    }
+
+    generateButtons("cold-buffet", "cold", 18, coldNames);
+    generateButtons("warm-buffet", "warm", 11, warmNames);
+
+    function toggleButton(wrapper) {
+      const button = wrapper.querySelector("button");
+      const section = wrapper.getAttribute("data-section");
+      const index = wrapper.getAttribute("data-index");
+      const imgPath = wrapper.getAttribute("data-img");
+
+      if (button.classList.contains("active")) {
+        button.classList.remove("active");
+        socket.emit("buttonToggled", { section, index, active: false, img: imgPath });
+      } else {
+        button.classList.add("active");
+        socket.emit("buttonToggled", { section, index, active: true, img: imgPath });
+      }
+    }
+
+    document.querySelectorAll(".button-wrapper").forEach(wrapper => {
+      const button = wrapper.querySelector("button");
+      button.addEventListener("click", () => {
+        toggleButton(wrapper);
+      });
+    });
+
+    socket.on("updateToggle", (data) => {
+      const selector = `.button-wrapper[data-section="${data.section}"][data-index="${data.index}"] button`;
+      const button = document.querySelector(selector);
+      if (button) {
+        if (data.active) {
+          button.classList.add("active");
+        } else {
+          button.classList.remove("active");
+        }
+      }
+    });
+
+    // Správa programu – Schedule management
+    const scheduleTimeInput = document.getElementById("schedule-time");
+    const scheduleCountInput = document.getElementById("schedule-count");
+    const addScheduleBtn = document.getElementById("addSchedule");
+    const updateScheduleBtn = document.getElementById("updateSchedule");
+    const cancelUpdateBtn = document.getElementById("cancelUpdate");
+    const deleteAllScheduleBtn = document.getElementById("deleteAllSchedule");
+    const scheduleTableBody = document.querySelector("#schedule-table tbody");
+
+    let currentEditId = null;
+
+    addScheduleBtn.addEventListener("click", () => {
+      const timeVal = scheduleTimeInput.value.trim();
+      const countVal = scheduleCountInput.value.trim();
+      if (!timeVal || !countVal) {
+        alert("Vyplňte prosím oba údaje.");
+        return;
+      }
+      const newItem = { time: timeVal, count: countVal };
+      socket.emit("scheduleAdd", newItem);
+      scheduleTimeInput.value = "";
+      scheduleCountInput.value = "";
+    });
+
+    updateScheduleBtn.addEventListener("click", () => {
+      const timeVal = scheduleTimeInput.value.trim();
+      const countVal = scheduleCountInput.value.trim();
+      if (!timeVal || !countVal) {
+        alert("Vyplňte prosím oba údaje.");
+        return;
+      }
+      if (currentEditId !== null) {
+        const updatedItem = { id: currentEditId, time: timeVal, count: countVal };
+        socket.emit("scheduleUpdate", updatedItem);
+        currentEditId = null;
+        scheduleTimeInput.value = "";
+        scheduleCountInput.value = "";
+        addScheduleBtn.style.display = "inline-block";
+        updateScheduleBtn.style.display = "none";
+        cancelUpdateBtn.style.display = "none";
+      }
+    });
+
+    cancelUpdateBtn.addEventListener("click", () => {
+      currentEditId = null;
+      scheduleTimeInput.value = "";
+      scheduleCountInput.value = "";
+      addScheduleBtn.style.display = "inline-block";
+      updateScheduleBtn.style.display = "none";
+      cancelUpdateBtn.style.display = "none";
+    });
+
+    // Opravené tlačítko pro vymazání celého programu: odesílá "deleteAllSchedule"
+    deleteAllScheduleBtn.addEventListener("click", () => {
+      if (confirm("Opravdu chcete vymazat všechny položky programu?")) {
+        socket.emit("deleteAllSchedule");
+      }
+    });
+
+    function updateScheduleTable(items) {
+      scheduleTableBody.innerHTML = "";
+      items.forEach(item => {
+        const row = document.createElement("tr");
+        row.innerHTML = `<td>${item.time}</td>
+                         <td>${item.count}</td>
+                         <td>
+                           <button class="edit-btn" data-id="${item.id}" data-time="${item.time}" data-count="${item.count}">Upravit</button>
+                           <button class="delete-btn" data-id="${item.id}">Smazat</button>
+                         </td>`;
+        scheduleTableBody.appendChild(row);
+      });
+      document.querySelectorAll(".edit-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = btn.getAttribute("data-id");
+          const time = btn.getAttribute("data-time");
+          const count = btn.getAttribute("data-count");
+          currentEditId = Number(id);
+          scheduleTimeInput.value = time;
+          scheduleCountInput.value = count;
+          addScheduleBtn.style.display = "none";
+          updateScheduleBtn.style.display = "inline-block";
+          cancelUpdateBtn.style.display = "inline-block";
+        });
+      });
+      document.querySelectorAll(".delete-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          const id = Number(btn.getAttribute("data-id"));
+          socket.emit("scheduleDelete", id);
+        });
+      });
+    }
+
+    socket.on("scheduleData", (data) => {
+      updateScheduleTable(data);
+    });
+  </script>
+</body>
+</html>

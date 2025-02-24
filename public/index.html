@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+  <meta charset="UTF-8">
+  <title>Viewer - Bufet</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: Arial, sans-serif;
+      background: #fff;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    /* Horní záhlaví s hodinami a tlačítkem Admin */
+    #header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #ccc;
+      padding: 10px;
+    }
+    #clock {
+      font-size: 24px;
+    }
+    #adminBtn {
+      padding: 5px 10px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    #main {
+      flex: 1;
+      display: flex;
+      overflow: auto;
+    }
+    #left-container {
+      flex: 2;
+      padding: 10px;
+      overflow-y: auto;
+    }
+    #right-container {
+      flex: 1;
+      padding: 10px;
+      border-left: 1px solid #ccc;
+      overflow-y: auto;
+    }
+    h2 {
+      margin: 20px 10px 10px;
+    }
+    /* Fronta aktivních položek */
+    .queue-container {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 10px 0;
+    }
+    .queue-item {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 150px;
+      height: 150px;
+      position: relative;
+    }
+    .queue-item img {
+      max-width: 100%;
+      max-height: 100%;
+    }
+    .stopwatch {
+      font-size: 14px;
+      margin-top: 5px;
+    }
+    .blinking {
+      animation: blinking 1s infinite;
+    }
+    @keyframes blinking {
+      0% { opacity: 1; }
+      50% { opacity: 0; }
+      100% { opacity: 1; }
+    }
+    /* Read-only zobrazení programu */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 5px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <div id="clock"></div>
+    <button id="adminBtn">Admin</button>
+  </div>
+  <div id="main">
+    <div id="left-container">
+      <h2>Studený bufet</h2>
+      <div id="cold-queue" class="queue-container"></div>
+      <h2>Teplý bufet</h2>
+      <div id="warm-queue" class="queue-container"></div>
+    </div>
+    <div id="right-container">
+      <h2>Program</h2>
+      <table id="schedule-table">
+        <thead>
+          <tr>
+            <th>Čas</th>
+            <th>Počet lidí</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  
+  <script>
+    const socket = io();
+    const clockElem = document.getElementById("clock");
+    const adminBtn = document.getElementById("adminBtn");
+
+    // Aktualizace aktuálního času každou sekundu
+    setInterval(() => {
+      clockElem.textContent = new Date().toLocaleTimeString();
+    }, 1000);
+
+    // Přesměrování do administrátorského rozhraní při kliknutí
+    adminBtn.addEventListener("click", () => {
+      window.location.href = "admin.html";
+    });
+
+    // Timer pro aktivní položky bufetu
+    const timers = {};
+    const TIMER_DURATION = 180000; // 3 minuty
+    const BLINK_THRESHOLD = 10000; // posledních 10 sekund
+
+    function formatTime(ms) {
+      const totalSeconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      return (minutes < 10 ? "0" : "") + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+    }
+
+    function addOrUpdateItem(data) {
+      const containerId = data.section === "cold" ? "cold-queue" : "warm-queue";
+      const container = document.getElementById(containerId);
+      const itemId = data.section + "-" + data.index;
+      let item = document.getElementById(itemId);
+      if (!item) {
+        item = document.createElement("div");
+        item.className = "queue-item";
+        item.id = itemId;
+        item.innerHTML = `<img src="${data.img}" alt="Obrázek">
+                          <div class="stopwatch">00:00</div>`;
+        container.appendChild(item);
+      }
+      const activationTime = data.activationTime;
+      const elapsed = Date.now() - activationTime;
+      let remaining = TIMER_DURATION - elapsed;
+      if (remaining < 0) remaining = 0;
+
+      if (timers[itemId]) {
+        clearTimeout(timers[itemId].timeout);
+        clearInterval(timers[itemId].interval);
+      }
+      const timeout = setTimeout(() => {
+        socket.emit("timerExpired", { section: data.section, index: data.index, img: data.img });
+      }, remaining);
+
+      const stopwatchElem = item.querySelector(".stopwatch");
+      const interval = setInterval(() => {
+        const nowElapsed = Date.now() - activationTime;
+        const timeLeft = TIMER_DURATION - nowElapsed;
+        stopwatchElem.textContent = formatTime(timeLeft > 0 ? timeLeft : 0);
+        const imgElem = item.querySelector("img");
+        if (timeLeft <= BLINK_THRESHOLD) {
+          imgElem.classList.add("blinking");
+        } else {
+          imgElem.classList.remove("blinking");
+        }
+      }, 500);
+
+      timers[itemId] = { timeout, interval };
+    }
+
+    function removeItem(data) {
+      const itemId = data.section + "-" + data.index;
+      const item = document.getElementById(itemId);
+      if (item) {
+        item.parentNode.removeChild(item);
+      }
+      if (timers[itemId]) {
+        clearTimeout(timers[itemId].timeout);
+        clearInterval(timers[itemId].interval);
+        delete timers[itemId];
+      }
+    }
+
+    socket.on("updateToggle", (data) => {
+      if (data.active) {
+        if (!data.activationTime) {
+          data.activationTime = Date.now();
+        }
+        addOrUpdateItem(data);
+      } else {
+        removeItem(data);
+      }
+    });
+
+    // Zobrazení read-only programu
+    const scheduleTableBody = document.querySelector("#schedule-table tbody");
+    function updateScheduleTable(items) {
+      scheduleTableBody.innerHTML = "";
+      items.forEach(item => {
+        const row = document.createElement("tr");
+        row.innerHTML = `<td>${item.time}</td>
+                         <td>${item.count}</td>`;
+        scheduleTableBody.appendChild(row);
+      });
+    }
+    socket.on("scheduleData", (data) => {
+      updateScheduleTable(data);
+    });
+  </script>
+</body>
+</html>
